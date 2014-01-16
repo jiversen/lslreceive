@@ -9,7 +9,7 @@
  *  Adapted from Grace Leslie's lslaudio.c
  *
  *   this is a bit more general purpose:
- *      -can specify the number of channels and stream name
+ *      -can specify the number of channels, stream name, and data type ('string' or 'float')
  *          defaults: 10, 'MAX'
  *          usage: [lslreceive nchan streamname]
  *          thus, one can have multiple lsl streams being used for different purposes, rather than
@@ -26,22 +26,30 @@
 #include <stdio.h>
 
 #define DEFAULT_NCHAN 10        //pull this from object parameters
-#define DEFAULT_STREAM_NAME "MAX"
 #define MAX_NCHAN 2000          //some unreaonably large value
-#define POLLING_INTERVAL_MS 1   //poll stream this often (Q: is there any way to specify a callback?)
+#define DEFAULT_STREAM_NAME "MAX"
 #define MAX_STREAM_NAME_LENGTH 200
+#define DEFAULT_DATA_TYPE "string"
+#define MAX_DATA_TYPE_LENGTH 32
+#define POLLING_INTERVAL_MS 1   //poll stream this often (Q: is there any way to specify a callback?)
 
+// note, this struct is lazily inefficient, since it contains buffers for both string and float samples
+// while only one can be used. And they have a wildly large number of channels. However, the sizes are very small.
+//  TODO (someday): dynamically allocate a single buffer depending on data type
 
 typedef struct _lslreceive
 {
 	t_object m_obj;
 	void * m_outlet[3];
 	void * m_clock;
-    char* cursample[MAX_NCHAN];     /* array to hold our current sample string*/
-    
+    char* cursample_string[MAX_NCHAN];     /* array to hold our current sample string*/
+    float cursample_float[MAX_NCHAN];      /* array to hold our current sample float*/
+    t_atom myList[MAX_NCHAN];
 	
     int lsl_nchan;              /* number of channels in the stream (speacified when creating object) */
     char lsl_stream_name[MAX_STREAM_NAME_LENGTH];  /* name of stream */
+    char data_type[MAX_STREAM_NAME_LENGTH]; /* ui specified data type */
+    lsl_channel_format_t lsl_channel_format; /* lsl enum defined by data_type */
 	lsl_streaminfo lsl_info;	/* the streaminfo returned by the resolve call */
 	lsl_inlet lsl_inlet;		/* a stream inlet to get samples from */
 	int lsl_errcode;			/* error code (lsl_lost_error or timeouts) */
@@ -112,11 +120,29 @@ void* lslreceive_new(t_symbol* s, long argc, t_atom* argv)
             strncpy(x->lsl_stream_name, DEFAULT_STREAM_NAME, MAX_STREAM_NAME_LENGTH);
             post("Using default stream name (%s)",x->lsl_stream_name);
         }
+        
+        // get stream format, default to string
+        if (argc>=3 && argv[2].a_type==A_SYM) {
+            strncpy(x->data_type, atom_getsym(&argv[2])->s_name, MAX_DATA_TYPE_LENGTH);
+        } else {
+            strncpy(x->data_type, DEFAULT_DATA_TYPE, MAX_DATA_TYPE_LENGTH);
+            post("Using default data type (%s)",x->data_type);
+        }
+        
+        // handle data-type specifics
+        if (strcmp(x->data_type, "string")) {
+            x->lsl_channel_format = cft_string;
+        } else if (strcmp(x->data_type, "float")) {
+            x->lsl_channel_format = cft_float32;
+        } else {
+            post("Unsupported data type (%s)",x->data_type);
+            return NULL;
+        }
 				
 		/* open the stream of interest. We control stream creation, so can explicitly specify the stream rather than
          resolve it.*/
-        post("Listening for an AudioControl stream named '%s' with %d channels...",x->lsl_stream_name,x->lsl_nchan);
-		x->lsl_info = lsl_create_streaminfo(x->lsl_stream_name,"AudioControl",x->lsl_nchan,LSL_IRREGULAR_RATE,cft_string,"");
+        post("Listening for an AudioControl stream named '%s' with %d channels of %s...",x->lsl_stream_name,x->lsl_nchan, x->data_type);
+		x->lsl_info = lsl_create_streaminfo(x->lsl_stream_name,"AudioControl",x->lsl_nchan,LSL_IRREGULAR_RATE,x->lsl_channel_format,"");
         
         /* TODO: use resolver to only match stream with number of channels we're requesting */
         /* problem: MAX won't flush our post messages while this is happening, so user just gets a beachball without knowing why        */
@@ -139,8 +165,7 @@ void* lslreceive_new(t_symbol* s, long argc, t_atom* argv)
         int errcode; //we don't do anything with this
         lsl_streaminfo new_info = lsl_get_fullinfo(x->lsl_inlet, 1, &errcode);
          */
-        
-        
+                
         // actually, this never fails--it's always waiting for the stream until it appears
         if (x->lsl_inlet) {
             
@@ -212,25 +237,65 @@ void lslreceive_getSample(t_lslreceive *x)
 {
 	int errcode; //we don't do anything with this
 
-	x->lsl_timestamp = lsl_pull_sample_str(x->lsl_inlet,x->cursample,x->lsl_nchan,0,&errcode);
+    switch (x->lsl_channel_format) {
+        case cft_string:
+            x->lsl_timestamp = lsl_pull_sample_str(x->lsl_inlet,x->cursample_string,x->lsl_nchan,0,&errcode);
+            break;
+            
+        case cft_float32:
+            x->lsl_timestamp = lsl_pull_sample_f(x->lsl_inlet,x->cursample_float,x->lsl_nchan,0,&errcode);
+            break;
+            
+        default:
+            x->lsl_timestamp = 0; //should never reach
+            break;
+    }
 
     while (x->lsl_timestamp>0)	{
         //post("%f", x->lsl_timestamp);
 		//post ("%s  %s  %s  %s  %s  %s  %s  %s",x->cursample[0],x->cursample[1],x->cursample[2],x->cursample[3],x->cursample[4],x->cursample[5],x->cursample[6],x->cursample[7]);
         
-		t_atom myList[x->lsl_nchan]; //consider allocating once, rather than at sample		
-       
-        // return list of strings, for flexibility, and consumer can use [fromsymbol] to convert to numbers
-        for (int k=0; k < x->lsl_nchan; ++k) {
-			atom_setsym(myList+k,gensym(x->cursample[k]));
-		}
+		
         
+        // create list depending on data type received
+       
+        switch (x->lsl_channel_format) {
+            case cft_string:
+                // return list of strings, for flexibility, and consumer can use [fromsymbol] to convert to numbers
+                for (int k=0; k < x->lsl_nchan; ++k) {
+                    atom_setsym(x->myList+k,gensym(x->cursample_string[k]));
+                }
+                break;
+                
+            case cft_float32:
+                // return list of strings, for flexibility, and consumer can use [fromsymbol] to convert to numbers
+                for (int k=0; k < x->lsl_nchan; ++k) {
+                    atom_setfloat(x->myList+k,x->cursample_float[k]);
+                }
+                break;
+                
+            default:
+                break;
+        }
+
         x->lsl_local_timestamp = lsl_local_clock(); //time of our output
-		outlet_list(x->m_outlet[0],0L,x->lsl_nchan,myList);
+		outlet_list(x->m_outlet[0],0L,x->lsl_nchan,x->myList);
         outlet_float(x->m_outlet[1], x->lsl_timestamp);
         outlet_float(x->m_outlet[2], x->lsl_local_timestamp);
         
-		x->lsl_timestamp = lsl_pull_sample_str(x->lsl_inlet,x->cursample,x->lsl_nchan,0,&errcode);
+        switch (x->lsl_channel_format) {
+            case cft_string:
+                x->lsl_timestamp = lsl_pull_sample_str(x->lsl_inlet,x->cursample_string,x->lsl_nchan,0,&errcode);
+                break;
+                
+            case cft_float32:
+                x->lsl_timestamp = lsl_pull_sample_f(x->lsl_inlet,x->cursample_float,x->lsl_nchan,0,&errcode);
+                break;
+                
+            default:
+                x->lsl_timestamp = 0; //should never reach
+                break;
+        }
 	}
 	
 	clock_fdelay(x->m_clock, POLLING_INTERVAL_MS);
