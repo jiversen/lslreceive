@@ -109,7 +109,7 @@ void* lslreceive_new(t_symbol* s, long argc, t_atom* argv)
                 post("Warning: Limiting the specified large number of channels to the maximum of 2000. Contact the author if this is not sufficient.");
             }
         } else {
-            post("Using default number of channels (%d).",DEFAULT_NCHAN);
+            post(" Using default number of channels (%d).",DEFAULT_NCHAN);
             x->lsl_nchan = DEFAULT_NCHAN;
         }
         
@@ -118,7 +118,7 @@ void* lslreceive_new(t_symbol* s, long argc, t_atom* argv)
             strncpy(x->lsl_stream_name, atom_getsym(&argv[1])->s_name, MAX_STREAM_NAME_LENGTH);
         } else {
             strncpy(x->lsl_stream_name, DEFAULT_STREAM_NAME, MAX_STREAM_NAME_LENGTH);
-            post("Using default stream name (%s)",x->lsl_stream_name);
+            post(" Using default stream name (%s)",x->lsl_stream_name);
         }
         
         // get stream format, default to string
@@ -126,7 +126,7 @@ void* lslreceive_new(t_symbol* s, long argc, t_atom* argv)
             strncpy(x->data_type, atom_getsym(&argv[2])->s_name, MAX_DATA_TYPE_LENGTH);
         } else {
             strncpy(x->data_type, DEFAULT_DATA_TYPE, MAX_DATA_TYPE_LENGTH);
-            post("Using default data type (%s)",x->data_type);
+            post(" Using default data type (%s)",x->data_type);
         }
         
         // handle data-type specifics
@@ -135,7 +135,7 @@ void* lslreceive_new(t_symbol* s, long argc, t_atom* argv)
         } else if (strcmp(x->data_type, "float")) {
             x->lsl_channel_format = cft_float32;
         } else {
-            post("Unsupported data type (%s)",x->data_type);
+            post("ERROR: Unsupported data type (%s)",x->data_type);
             return NULL;
         }
 				
@@ -203,7 +203,7 @@ void lslreceive_assist(t_lslreceive* x, void* b, long m, long a, char* s)
 	else {
 		switch (a) {
 			case 0:
-				sprintf(s, "List of %d strings received from LSL stream '%s'",x->lsl_nchan, x->lsl_stream_name);
+				sprintf(s, "List of %d %s values received from LSL stream '%s'",x->lsl_nchan, x->data_type, x->lsl_stream_name);
 				break;
 			case 1:
 				sprintf(s, "LSL timestamp (sender)");
@@ -254,8 +254,6 @@ void lslreceive_getSample(t_lslreceive *x)
     while (x->lsl_timestamp>0)	{
         //post("%f", x->lsl_timestamp);
 		//post ("%s  %s  %s  %s  %s  %s  %s  %s",x->cursample[0],x->cursample[1],x->cursample[2],x->cursample[3],x->cursample[4],x->cursample[5],x->cursample[6],x->cursample[7]);
-        
-		
         
         // create list depending on data type received
        
