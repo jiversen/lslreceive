@@ -4,20 +4,21 @@
  *
  *  Created by John Iversen on 1/1/14.
  *
- *  receive a list of strings from an lsl stream, use these to control max
+ *  receive a list of values from an lsl stream, use these to control max
  *
  *  Adapted from Grace Leslie's lslaudio.c
  *
  *   this is a bit more general purpose:
- *      -can specify the number of channels, stream name, and data type ('string' or 'float')
- *          defaults: 10, 'MAX'
- *          usage: [lslreceive nchan streamname]
+ *      -can optionally specify the number of channels, stream name, and data type ('string' or 'float' currently)
+ *          defaults: 10, 'MAX', 'string'
+ *          usage: [lslreceive nchan streamname format]
  *          thus, one can have multiple lsl streams being used for different purposes, rather than
  *          having to multiplex different messages
- *      -makes no assumptions about data types (all are returned as symbols.) After unpacking the list, 
- *          user can use [fromsymbol] to convert to numbers. You could use info's channel descriptions to
- *          customise this and name outputs, etc...
- *      -outputs the sender's timestamp, and the local timestamp, should these be of interest e.g. for latency calculations
+ *      -all data must have same format, so if you need mix of strings and numbers, use 'string' and thena
+ *          after unpacking the list use [fromsymbol] to convert to numbers. 
+ *      -outputs the sender's timestamp, and the local timestamp, should these be of interest e.g. for latency
+ *          calculations
+ *      - someday: use info's channel descriptions to customise output format and name outputs, etc...
  */
 
 #include "ext.h"
@@ -130,14 +131,18 @@ void* lslreceive_new(t_symbol* s, long argc, t_atom* argv)
         }
         
         // handle data-type specifics
-        if (strcmp(x->data_type, "string")) {
+        if (!strcmp(x->data_type, "string")) {
             x->lsl_channel_format = cft_string;
-        } else if (strcmp(x->data_type, "float")) {
+            post("parse string");
+        } else if (!strcmp(x->data_type, "float")) {
+            post("parse float");
             x->lsl_channel_format = cft_float32;
         } else {
             post("ERROR: Unsupported data type (%s)",x->data_type);
             return NULL;
         }
+        
+         post("data_type=%s, lsl_channel_format=%d",x->data_type, x->lsl_channel_format);
 				
 		/* open the stream of interest. We control stream creation, so can explicitly specify the stream rather than
          resolve it.*/
@@ -236,7 +241,7 @@ void lslreceive_assist(t_lslreceive* x, void* b, long m, long a, char* s)
 void lslreceive_getSample(t_lslreceive *x)
 {
 	int errcode; //we don't do anything with this
-
+    
     switch (x->lsl_channel_format) {
         case cft_string:
             x->lsl_timestamp = lsl_pull_sample_str(x->lsl_inlet,x->cursample_string,x->lsl_nchan,0,&errcode);
@@ -254,6 +259,7 @@ void lslreceive_getSample(t_lslreceive *x)
     while (x->lsl_timestamp>0)	{
         //post("%f", x->lsl_timestamp);
 		//post ("%s  %s  %s  %s  %s  %s  %s  %s",x->cursample[0],x->cursample[1],x->cursample[2],x->cursample[3],x->cursample[4],x->cursample[5],x->cursample[6],x->cursample[7]);
+
         
         // create list depending on data type received
        
